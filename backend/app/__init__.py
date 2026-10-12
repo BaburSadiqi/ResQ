@@ -1,0 +1,1 @@
+"""ResQ application package."""
