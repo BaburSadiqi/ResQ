@@ -17,8 +17,9 @@ class SeismicEventRead(BaseModel):
     depth_km: Decimal | None
     occurred_at: datetime
     source_updated_at: datetime | None
-    event_status: str | None
-    source_url: str | None
+    event_type: str | None
+    source_status: str | None
+    event_url: str | None
 
 
 class SeismicEventPage(BaseModel):

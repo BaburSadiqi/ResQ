@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
+from pydantic import BaseModel, HttpUrl, field_validator, model_validator
 
 
 class UsgsEvent(BaseModel):
@@ -15,8 +15,9 @@ class UsgsEvent(BaseModel):
     depth_km: Decimal | None
     occurred_at: datetime
     source_updated_at: datetime | None
-    event_status: str | None
-    source_url: HttpUrl | None
+    event_type: str | None
+    source_status: str | None
+    event_url: HttpUrl | None
     raw_properties: dict[str, Any]
 
     @field_validator("latitude")
@@ -45,7 +46,9 @@ class UsgsEvent(BaseModel):
             raise ValueError("feature is missing id, coordinates, or time")
 
         def millis_to_utc(timestamp: int | float | None) -> datetime | None:
-            return datetime.fromtimestamp(timestamp / 1000, tz=UTC) if timestamp is not None else None
+            if timestamp is None:
+                return None
+            return datetime.fromtimestamp(timestamp / 1000, tz=UTC)
 
         return {
             "source_event_id": value["id"], "magnitude": properties.get("mag"),
@@ -54,6 +57,7 @@ class UsgsEvent(BaseModel):
             "depth_km": coordinates[2] if len(coordinates) > 2 else None,
             "occurred_at": millis_to_utc(properties["time"]),
             "source_updated_at": millis_to_utc(properties.get("updated")),
-            "event_status": properties.get("status"), "source_url": properties.get("url"),
+            "event_type": properties.get("type"), "source_status": properties.get("status"),
+            "event_url": properties.get("url"),
             "raw_properties": properties,
         }

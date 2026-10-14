@@ -15,9 +15,9 @@ class UsgsIngestionService:
         self.session, self.client = session, client
 
     async def ingest(self, start_time: datetime, end_time: datetime, min_magnitude: float | None = None) -> int:
-        source = await self.session.scalar(select(DataSource).where(DataSource.name == "USGS Earthquake Catalog"))
+        source = await self.session.scalar(select(DataSource).where(DataSource.code == "usgs"))
         if source is None:
-            source = DataSource(name="USGS Earthquake Catalog", base_url=str(self.client.settings.usgs_base_url), source_type="catalog")
+            source = DataSource(name="USGS Earthquake Catalog", code="usgs", base_url=str(self.client.settings.usgs_base_url))
             self.session.add(source)
             await self.session.flush()
         imported = 0
@@ -26,8 +26,8 @@ class UsgsIngestionService:
             existing = await self.session.scalar(select(SeismicEvent).where(SeismicEvent.data_source_id == source.id, SeismicEvent.source_event_id == event.source_event_id))
             if existing is None:
                 values = event.model_dump()
-                if values["source_url"] is not None:
-                    values["source_url"] = str(values["source_url"])
+                if values["event_url"] is not None:
+                    values["event_url"] = str(values["event_url"])
                 self.session.add(SeismicEvent(data_source_id=source.id, **values))
                 imported += 1
         await self.session.commit()

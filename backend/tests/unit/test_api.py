@@ -24,7 +24,7 @@ class FakeService:
 
 
 def sample_event() -> SeismicEvent:
-    return SeismicEvent(id=uuid.uuid4(), source_event_id="us1", data_source_id=uuid.uuid4(), magnitude=Decimal("4.20"), magnitude_type="mb", place="Test", latitude=Decimal("34.5"), longitude=Decimal("67.1"), depth_km=Decimal("10"), occurred_at=datetime.now(UTC), source_updated_at=None, event_status="reviewed", source_url=None, raw_properties={})
+    return SeismicEvent(id=uuid.uuid4(), source_event_id="us1", data_source_id=uuid.uuid4(), magnitude=Decimal("4.20"), magnitude_type="mb", place="Test", latitude=Decimal("34.5"), longitude=Decimal("67.1"), depth_km=Decimal("10"), event_type="earthquake", source_status="reviewed", occurred_at=datetime.now(UTC), source_updated_at=None, event_url=None, raw_properties={})
 
 
 def test_health() -> None:

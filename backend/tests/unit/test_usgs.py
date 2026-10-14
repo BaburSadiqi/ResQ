@@ -47,7 +47,7 @@ async def test_timeout_is_wrapped() -> None:
 
 @pytest.mark.asyncio
 async def test_duplicate_catalog_event_is_not_added() -> None:
-    source = DataSource(name="USGS Earthquake Catalog", base_url="https://example.org", source_type="catalog")
+    source = DataSource(name="USGS Earthquake Catalog", code="usgs", base_url="https://example.org")
     source.id = uuid.uuid4()
 
     class Session:
