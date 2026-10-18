@@ -41,8 +41,15 @@ class UsgsEvent(BaseModel):
             return value
         properties = value.get("properties") or {}
         geometry = value.get("geometry") or {}
+        if not isinstance(properties, dict) or not isinstance(geometry, dict):
+            raise ValueError("feature properties and geometry must be objects")
         coordinates = geometry.get("coordinates") or []
-        if not value.get("id") or len(coordinates) < 2 or properties.get("time") is None:
+        if (
+            not isinstance(coordinates, list)
+            or not value.get("id")
+            or len(coordinates) < 2
+            or properties.get("time") is None
+        ):
             raise ValueError("feature is missing id, coordinates, or time")
 
         def millis_to_utc(timestamp: int | float | None) -> datetime | None:

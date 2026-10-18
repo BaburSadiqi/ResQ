@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -12,11 +12,23 @@ class UsgsClient:
         self.settings, self._client = settings, client
 
     async def fetch_events(self, start_time: datetime, end_time: datetime, min_magnitude: float | None = None) -> list[dict[str, Any]]:
+        start_time = self._validated_utc(start_time, "start_time")
+        end_time = self._validated_utc(end_time, "end_time")
+        if start_time >= end_time:
+            raise ValueError("start_time must be before end_time")
+        if min_magnitude is not None and not -2 <= min_magnitude <= 10:
+            raise ValueError("min_magnitude must be between -2 and 10")
         params: dict[str, str | float] = {"format": "geojson", "starttime": start_time.isoformat(), "endtime": end_time.isoformat()}
         if min_magnitude is not None:
             params["minmagnitude"] = min_magnitude
         owns_client = self._client is None
-        client = self._client or httpx.AsyncClient(timeout=httpx.Timeout(self.settings.http_timeout_seconds))
+        timeout = httpx.Timeout(
+            connect=self.settings.http_timeout_seconds,
+            read=self.settings.http_timeout_seconds,
+            write=self.settings.http_timeout_seconds,
+            pool=self.settings.http_timeout_seconds,
+        )
+        client = self._client or httpx.AsyncClient(timeout=timeout)
         try:
             response = await client.get(f"{str(self.settings.usgs_base_url).rstrip('/')}/query", params=params)
             response.raise_for_status()
@@ -30,3 +42,9 @@ class UsgsClient:
         finally:
             if owns_client:
                 await client.aclose()
+
+    @staticmethod
+    def _validated_utc(value: datetime, name: str) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{name} must include a UTC offset")
+        return value.astimezone(UTC)

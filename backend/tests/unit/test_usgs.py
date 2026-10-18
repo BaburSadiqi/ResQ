@@ -1,5 +1,5 @@
-from datetime import UTC, datetime
 import uuid
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -46,6 +46,44 @@ async def test_timeout_is_wrapped() -> None:
 
 
 @pytest.mark.asyncio
+async def test_empty_geojson_response_returns_no_events() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"type": "FeatureCollection", "features": []})
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await UsgsClient(Settings(), client).fetch_events(
+            datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)
+        )
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_malformed_records_are_skipped() -> None:
+    source = DataSource(name="USGS Earthquake Catalog", code="usgs")
+    source.id = uuid.uuid4()
+
+    class Session:
+        async def scalar(self, query):
+            return source if "data_sources" in str(query) else None
+
+        def add(self, item) -> None:
+            raise AssertionError("no malformed event should be added")
+
+        async def commit(self) -> None:
+            pass
+
+    class Client:
+        settings = Settings()
+
+        async def fetch_events(self, *args):
+            return [{"id": "bad", "properties": {}, "geometry": {"coordinates": []}}]
+
+    assert await UsgsIngestionService(Session(), Client()).ingest(
+        datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 2, tzinfo=UTC)
+    ) == 0
+
+
+@pytest.mark.asyncio
 async def test_duplicate_catalog_event_is_not_added() -> None:
     source = DataSource(name="USGS Earthquake Catalog", code="usgs", base_url="https://example.org")
     source.id = uuid.uuid4()
@@ -57,7 +95,7 @@ async def test_duplicate_catalog_event_is_not_added() -> None:
 
         async def scalar(self, query):
             self.calls += 1
-            return source if self.calls == 1 else object()
+            return source if self.calls == 1 else None
 
         def add(self, item) -> None:
             self.added.append(item)

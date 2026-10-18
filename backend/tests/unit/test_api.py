@@ -59,3 +59,21 @@ def test_event_filtering_and_not_found() -> None:
         assert client.get(f"/api/v1/seismic-events/{uuid.uuid4()}").status_code == 404
     finally:
         app.dependency_overrides.clear()
+
+
+def test_event_list_rejects_invalid_pagination_and_time_ranges() -> None:
+    event = sample_event()
+    app.dependency_overrides[get_service] = lambda: FakeService(event)
+    try:
+        client = TestClient(app)
+        assert client.get("/api/v1/seismic-events?limit=101").status_code == 422
+        assert (
+            client.get(
+                "/api/v1/seismic-events?start_time=2026-01-02T00:00:00Z"
+                "&end_time=2026-01-01T00:00:00Z"
+            ).status_code
+            == 422
+        )
+        assert client.get("/api/v1/seismic-events?start_time=2026-01-01T00:00:00").status_code == 422
+    finally:
+        app.dependency_overrides.clear()
