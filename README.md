@@ -44,6 +44,7 @@ For source context and responsible-use guidance, see [data sources](docs/data-so
 - Paginated seismic-event catalog API with time and magnitude filters
 - Event detail lookup by internal UUID, including public source provenance
 - Geographic bounding-box aggregates for stored catalog events
+- Read-only hypothetical earthquake scenarios compared with historical catalog proximity
 - Health and database-readiness endpoints
 - Bounded, manual USGS FDSN Event Web Service import in GeoJSON format
 - GeoJSON normalization, malformed-record skipping, and database-backed duplicate protection
@@ -156,6 +157,7 @@ Open [Swagger UI](http://127.0.0.1:8000/docs) to inspect and execute available e
 | `GET` | `/api/v1/seismic-events/{event_id}` | One stored event by internal UUID |
 | `GET` | `/api/v1/analytics/summary` | Aggregate statistics for the stored catalog |
 | `GET` | `/api/v1/analytics/geographic` | Aggregate observed catalog statistics within a bounding box |
+| `POST` | `/api/v1/scenarios/earthquake` | Compare a hypothetical scenario with nearby historical catalog events |
 
 `GET /api/v1/seismic-events` accepts:
 
@@ -185,6 +187,25 @@ Example:
 
 ```text
 http://127.0.0.1:8000/api/v1/analytics/geographic?south=33&north=35&west=66&east=68
+```
+
+`POST /api/v1/scenarios/earthquake` accepts a JSON body with `latitude`,
+`longitude`, hypothetical `magnitude`, hypothetical `depth_km`, and `radius_km`.
+It returns the hypothetical input unchanged and a separate aggregate of observed,
+already-published catalog events within the radius. The scenario is never stored.
+It is a research comparison only: proximity and magnitude do not predict future
+earthquakes or establish ground shaking, damage, casualties, or operational risk.
+
+Example:
+
+```json
+{
+  "latitude": 34.5,
+  "longitude": 67.1,
+  "magnitude": 5.8,
+  "depth_km": 15,
+  "radius_km": 100
+}
 ```
 
 ## Import a bounded USGS catalog range
