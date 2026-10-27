@@ -1,7 +1,7 @@
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.seismic_event import SeismicEvent
@@ -55,6 +55,46 @@ class AnalyticsRepository:
                 ),
                 "above_or_equal_5": row.magnitude_5_plus,
             },
+        }
+
+    async def get_geographic_summary(
+        self, south: Decimal, north: Decimal, west: Decimal, east: Decimal
+    ) -> dict[str, Any]:
+        """Aggregate catalog records inside a WGS 84 bounding box in SQL.
+
+        A west value greater than east represents a box that crosses the
+        antimeridian, so its longitude predicate is split into two ranges.
+        """
+        magnitude = SeismicEvent.magnitude
+        longitude_filter = (
+            or_(SeismicEvent.longitude >= west, SeismicEvent.longitude <= east)
+            if west > east
+            else SeismicEvent.longitude.between(west, east)
+        )
+        statement = select(
+            func.count(SeismicEvent.id).label("total_events"),
+            func.count(magnitude).label("events_with_magnitude"),
+            func.min(magnitude).label("smallest_magnitude"),
+            func.max(magnitude).label("largest_magnitude"),
+            func.avg(magnitude).label("average_magnitude"),
+        ).where(
+            SeismicEvent.latitude.between(south, north),
+            longitude_filter,
+        )
+        row = (await self.session.execute(statement)).one()
+        events_with_magnitude = row.events_with_magnitude
+
+        return {
+            "total_events": row.total_events,
+            "events_with_magnitude": events_with_magnitude,
+            "events_without_magnitude": row.total_events - events_with_magnitude,
+            "smallest_magnitude": row.smallest_magnitude,
+            "largest_magnitude": row.largest_magnitude,
+            "average_magnitude": (
+                Decimal(str(row.average_magnitude))
+                if row.average_magnitude is not None
+                else None
+            ),
         }
 
         

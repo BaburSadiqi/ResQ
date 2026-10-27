@@ -43,6 +43,7 @@ For source context and responsible-use guidance, see [data sources](docs/data-so
 - PostgreSQL persistence through SQLAlchemy 2.0 and Alembic
 - Paginated seismic-event catalog API with time and magnitude filters
 - Event detail lookup by internal UUID, including public source provenance
+- Geographic bounding-box aggregates for stored catalog events
 - Health and database-readiness endpoints
 - Bounded, manual USGS FDSN Event Web Service import in GeoJSON format
 - GeoJSON normalization, malformed-record skipping, and database-backed duplicate protection
@@ -153,6 +154,8 @@ Open [Swagger UI](http://127.0.0.1:8000/docs) to inspect and execute available e
 | `GET` | `/api/v1/health/ready` | PostgreSQL connectivity check |
 | `GET` | `/api/v1/seismic-events` | Stored event catalog with filters and pagination |
 | `GET` | `/api/v1/seismic-events/{event_id}` | One stored event by internal UUID |
+| `GET` | `/api/v1/analytics/summary` | Aggregate statistics for the stored catalog |
+| `GET` | `/api/v1/analytics/geographic` | Aggregate observed catalog statistics within a bounding box |
 
 `GET /api/v1/seismic-events` accepts:
 
@@ -168,6 +171,20 @@ Example:
 
 ```text
 http://127.0.0.1:8000/api/v1/seismic-events?limit=20&min_magnitude=4&start_time=2025-01-01T00:00:00Z
+```
+
+`GET /api/v1/analytics/geographic` requires `south`, `north`, `west`, and
+`east` WGS 84 decimal-degree bounds. Latitude bounds must satisfy `south <= north`.
+When `west > east`, the requested box crosses the antimeridian. The response's
+total includes all matching published catalog events; minimum, maximum, and
+average magnitude exclude records with a missing magnitude, whose count is
+returned separately. These are observed catalog statistics only: they do not
+predict earthquakes or establish future risk.
+
+Example:
+
+```text
+http://127.0.0.1:8000/api/v1/analytics/geographic?south=33&north=35&west=66&east=68
 ```
 
 ## Import a bounded USGS catalog range
