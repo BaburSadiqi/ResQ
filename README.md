@@ -226,8 +226,3 @@ The test suite uses mocked HTTPX transports; it does not call the live USGS serv
 
 Contributions are welcome. Keep changes focused, preserve the research-only scope, add or update tests for behavior changes, and do not add claims that imply earthquake prediction or operational warning capability.
 
-## License
-
-Copyright © 2026 Mohammad Babur Sadiqi.
-
-Released under the [MIT License](LICENSE).
