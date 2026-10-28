@@ -19,6 +19,6 @@ React, TypeScript, Vite, Leaflet, and Recharts client for the ResQ catalog API.
    npm run dev
    ```
 
-`VITE_API_BASE_URL` centralizes the backend origin. Leave it blank during local development: Vite proxies `/api` to `http://127.0.0.1:8000`, avoiding a browser cross-origin request. Set it to the deployed backend origin when the client is served separately (and configure that backend to allow the client's origin). The frontend calls the API's real `/api/v1` routes. Build a production bundle with `npm run build`.
+`VITE_API_BASE_URL` centralizes the backend origin. Leave it blank during local development: Vite proxies `/api` to `http://127.0.0.1:8000`, avoiding a browser cross-origin request. Override the proxy destination with `VITE_API_PROXY_TARGET` if the backend listens elsewhere. Set `VITE_API_BASE_URL` to the deployed backend origin when the client is served separately (and configure that backend to allow the client's origin). The frontend calls the API's real `/api/v1` routes. Build a production bundle with `npm run build`.
 
-The map uses CARTO's dark basemap and requires internet access for tiles. It displays only records returned by the configured ResQ API; an empty catalog is shown as an empty state rather than fabricated data.
+The map uses OpenStreetMap raster tiles and requires internet access for tiles. Keep the visible OpenStreetMap attribution in the map, and follow the tile usage policy for `tile.openstreetmap.org`; it is intended for normal interactive map use, not bulk or offline downloads. The map displays only records returned by the configured ResQ API; an empty catalog is shown as an empty state rather than fabricated data.
