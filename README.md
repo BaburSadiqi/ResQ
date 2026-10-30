@@ -27,9 +27,9 @@
 
 ## Overview
 
-ResQ is an open-source backend foundation for collecting, storing, filtering, and studying public earthquake-catalog data. It is aimed at students, researchers, and developers who need a clearly bounded starting point for seismic-data exploration.
+ResQ is an open-source research prototype for collecting, storing, filtering, and studying public earthquake-catalog data, alongside a separately labeled hypothetical early-warning simulation. It is aimed at students, researchers, and developers who need a clearly bounded starting point for seismic-data exploration.
 
-The current prototype provides a FastAPI catalog API, PostgreSQL persistence, and an explicitly triggered USGS FDSN GeoJSON import command. Simulations, operational alerting, and a web interface are not implemented yet.
+The current prototype provides a FastAPI catalog API, PostgreSQL persistence, an explicitly triggered USGS FDSN GeoJSON import command, and a React map-based research interface. Its hypothetical propagation workflow is an educational mathematical simulation, not operational alerting or a validated EEW algorithm.
 
 ## Why ResQ?
 
@@ -45,6 +45,8 @@ For source context and responsible-use guidance, see [data sources](docs/data-so
 - Event detail lookup by internal UUID, including public source provenance
 - Geographic bounding-box aggregates for stored catalog events
 - Read-only hypothetical earthquake scenarios compared with historical catalog proximity
+- Deterministic, in-memory P- and S-wave propagation and synthetic-sensor timeline
+- Interactive wavefront animation and target warning-lead-time calculations, explicitly labeled as research simulation
 - Health and database-readiness endpoints
 - Bounded, manual USGS FDSN Event Web Service import in GeoJSON format
 - GeoJSON normalization, malformed-record skipping, and database-backed duplicate protection
@@ -61,10 +63,12 @@ flowchart LR
     D --> R[Async SQLAlchemy repository]
     R --> A[FastAPI catalog API<br/>/api/v1/seismic-events]
     A --> S[Swagger /docs]
-    D -. planned .-> F[Visualization and simulation interface]
+    D --> F[React research dashboard]
+    F --> E[Hypothetical in-memory wave and sensor simulation]
+    E --> A
 ```
 
-The dashed component is planned. The USGS branch is catalog ingestion only—not a real-time detection or alert pipeline.
+The hypothetical simulation is a separate calculation path and does not read or write catalog data. The USGS branch remains catalog ingestion only—not a real-time detection or alert pipeline.
 
 ## Technology stack
 
@@ -94,7 +98,7 @@ ResQ/
 │   │   └── services/        # Catalog and ingestion workflows
 │   └── tests/               # Unit tests
 ├── docs/                    # Architecture and data-source notes
-├── frontend/                # Reserved for a future web client
+├── frontend/                # React + TypeScript + Vite map and research dashboard
 ├── LICENSE
 └── README.md
 ```
@@ -105,6 +109,7 @@ ResQ/
 
 - Python 3.12 or newer
 - PostgreSQL
+- Node.js and npm (frontend)
 - PowerShell on Windows (commands below)
 
 ### Install and configure
@@ -147,6 +152,18 @@ python -m uvicorn app.main:app --reload
 
 Open [Swagger UI](http://127.0.0.1:8000/docs) to inspect and execute available endpoints. The page can load without PostgreSQL, but database-backed endpoints require a working connection and applied migrations.
 
+### Run the frontend
+
+In a second terminal from the repository root:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open the local URL printed by Vite (normally `http://localhost:5173`). During local development, `/api` is proxied to `http://127.0.0.1:8000`; set `VITE_API_PROXY_TARGET` if the backend uses another address. The map's OpenStreetMap tiles require internet access. The early-warning simulation itself does not require PostgreSQL, imported catalog records, or external data.
+
 ## API
 
 | Method | Endpoint | Description |
@@ -158,6 +175,7 @@ Open [Swagger UI](http://127.0.0.1:8000/docs) to inspect and execute available e
 | `GET` | `/api/v1/analytics/summary` | Aggregate statistics for the stored catalog |
 | `GET` | `/api/v1/analytics/geographic` | Aggregate observed catalog statistics within a bounding box |
 | `POST` | `/api/v1/scenarios/earthquake` | Compare a hypothetical scenario with nearby historical catalog events |
+| `POST` | `/api/v1/scenarios/early-warning` | Run an in-memory hypothetical wave and synthetic sensor simulation |
 
 `GET /api/v1/seismic-events` accepts:
 
@@ -196,6 +214,24 @@ already-published catalog events within the radius. The scenario is never stored
 It is a research comparison only: proximity and magnitude do not predict future
 earthquakes or establish ground shaking, damage, casualties, or operational risk.
 
+### Early-warning research simulation
+
+In the dashboard's **Hypothetical earthquake scenario** section, set epicenter coordinates, magnitude, and depth. Click the map in Epicenter mode to select coordinates. Configure sensor count, the number of processed sensors required for the modeled alert, sensor distribution radius, detection and processing delays, approximate P/S velocities, and one or more target coordinates. Example city coordinates are only editable demonstration locations. Run the simulation, then play, pause, or reset the model clock. The map, sensor states, modeled alert, and time remaining to each target's S-wave arrival advance from the API-returned timestamps.
+
+`POST /api/v1/scenarios/early-warning` accepts epicenter `latitude` and `longitude` (WGS 84 degrees), `magnitude` (-2 to 10), `depth_km` (0 to 700), `detection_delay_seconds` and `processing_delay_seconds` (each 0 to 60), `sensor_count` (1 to 20), `required_sensor_count` (1 to sensor count), `sensor_radius_km` (greater than 0 through 1000), P velocity (3 to 8 km/s), S velocity (1.5 to 5 km/s and below P velocity), and 1 to 8 named target locations with valid latitude/longitude. Unknown fields, duplicate target names, and invalid values are rejected. Defaults are 8 sensors, a 2-sensor quorum, 250 km radius, 0.8 s detection delay, 0.5 s processing delay, and velocities 6 km/s (P) and 3.5 km/s (S).
+
+For epicenter latitude/longitude $(\phi_1,\lambda_1)$ and target $(\phi_2,\lambda_2)$, surface distance uses the spherical haversine great-circle equation, with angles in radians and mean Earth radius $R=6371$ km:
+
+$$a=\sin^2\left(\frac{\phi_2-\phi_1}{2}\right)+\cos(\phi_1)\cos(\phi_2)\sin^2\left(\frac{\lambda_2-\lambda_1}{2}\right),\quad d_{surface}=2R\arcsin(\sqrt{a})$$
+
+Depth is incorporated with a local right-triangle approximation, $d_h=\sqrt{d_{surface}^2+depth^2}$, where the surface arc is treated as a horizontal distance. This is not an exact geocentric chord calculation or seismic ray tracing. Modeled direct-wave arrival time is $t_P=d_h/v_P$ or $t_S=d_h/v_S$. Surface distances use a spherical Earth and the model assumes constant approximate velocities; the configured magnitude is retained as scenario metadata but does not affect travel times or alert calculations.
+
+Synthetic sensor locations use a deterministic golden-angle spiral: sensor $i$ (zero-based) is placed at radius $r_i=r_{max}\sqrt{(i+1)/N}$ and bearing $i\times2.399963$ radians from the epicenter. These points are illustrative, not verified locations or a representation of Afghanistan's monitoring infrastructure. Each sensor's modeled P detection is $t_{detect}=t_P+delay_{detect}$; its processed time is $t_{processed}=t_{detect}+delay_{processing}$. The API reports the earliest synthetic detection and the alert issuance time, which is the configured $k$th-smallest processed time, where $k$ is the required sensor quorum. This transparent order-statistic rule is not an operational detection algorithm.
+
+For each target, modeled warning lead time is $L=t_S-t_{alert}$. Positive $L$ means only that this simplified model places alert issuance before modeled S-wave arrival; absolute values at or below $10^{-9}$ seconds are classified as zero and labeled **No useful lead time**; negative means the model places S-wave arrival before alert issuance. A negative value is not a warning delivered before shaking, and positive lead time is not a delivery or safety guarantee. Animated surface radii stop at the antipodal limit of the spherical distance model.
+
+Real seismic waves travel through heterogeneous geological structures, and actual warning systems must address complex signal processing, station telemetry, communications, uncertainty, and alert delivery. This prototype does not model those factors, observed sensor readings, ground motion, damage, casualties, or a validated operational EEW algorithm. It does not detect actual earthquakes, provide operational earthquake warnings, or protect people. Its animation visualizes calculated model time only.
+
 Example:
 
 ```json
@@ -229,19 +265,14 @@ ruff check app tests --select F,I,UP
 
 The test suite uses mocked HTTPX transports; it does not call the live USGS service.
 
-## Roadmap
-
-- Clearly labelled seismic simulation workflows
-- Experimental research assessments
-- Next.js map-based visualization client
-- Carefully evaluated early-warning research workflows
-
 ## Scientific limitations and responsible use
 
 - Catalog records describe detected, located, and published events—not predictions.
 - Catalog ingestion is not equivalent to direct sensor telemetry or an operational early-warning feed.
 - Data completeness, timing, and revisions remain properties of the upstream source.
-- Any future simulation, assessment, or alert feature must be separately labelled and scientifically evaluated.
+- The hypothetical simulation is not an operational early-warning service, earthquake prediction, or validated safety tool.
+- Synthetic sensor markers are not real stations, and synthetic timing values are not measurements.
+- Any future simulation, assessment, or alert feature must be separately labeled and scientifically evaluated.
 
 ## Contributing
 
