@@ -1,4 +1,4 @@
-import type { Event, EventPage, Geographic, ScenarioInput, ScenarioResult, Summary } from "./types";
+import type { EarlyWarningInput, EarlyWarningResult, Event, EventPage, Geographic, ScenarioInput, ScenarioResult, Summary } from "./types";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 export class ApiError extends Error { constructor(message: string, readonly status?: number) { super(message); this.name = "ApiError"; } }
@@ -52,4 +52,5 @@ export const api = {
   async events(params: EventQuery): Promise<EventPage> { const query = new URLSearchParams(); Object.entries(params).forEach(([key, value]) => { if (value !== undefined && value !== "") query.set(key, String(value)); }); const value = await request<Omit<EventPage, "items"> & { items: ApiEvent[] }>(`/seismic-events?${query}`); return { ...value, items: value.items.map(eventFromApi) }; },
   async geographic(params: Record<string, number>): Promise<Geographic> { const query = new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)])); const value = await request<ApiGeographic>(`/analytics/geographic?${query}`); return { ...value, bounds: { ...value.bounds, south: requiredNumber(value.bounds.south), north: requiredNumber(value.bounds.north), west: requiredNumber(value.bounds.west), east: requiredNumber(value.bounds.east) }, smallest_magnitude: numeric(value.smallest_magnitude), largest_magnitude: numeric(value.largest_magnitude), average_magnitude: numeric(value.average_magnitude) }; },
   async scenario(input: ScenarioInput): Promise<ScenarioResult> { return scenarioFromApi(await request<ApiScenario>("/scenarios/earthquake", { method: "POST", body: JSON.stringify(input) })); },
+  async earlyWarning(input: EarlyWarningInput): Promise<EarlyWarningResult> { return request<EarlyWarningResult>("/scenarios/early-warning", { method: "POST", body: JSON.stringify(input) }); },
 };
