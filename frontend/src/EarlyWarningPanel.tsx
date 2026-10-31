@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Circle, CircleMarker, MapContainer, Popup, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import { api } from "./api";
 import "./early-warning.css";
@@ -25,6 +25,76 @@ const statusText = {
   no_useful_lead_time: "No useful lead time",
   shaking_before_alert: "Shaking expected before alert issuance",
 };
+const ALARM_AUDIO_URL = "/assets/videoplayback.m4a";
+const ALARM_SEQUENCE_DURATION_MS = 10_000;
+const likelyFemaleVoiceName = /\b(female|woman|zira|samantha|victoria|karen|susan|jenny|aria|sara|joanna|kendra|kimberly|salli|ivy|linda|heather|tessa|moira|fiona|ava|allison|serena|hazel|catherine|michelle|natasha|olivia|emma|amy|sonia|libby|maisie|luna|lucy|grace|monica|paulina|marisol|helena|eva)\b/i;
+
+type SpeechVoiceChoice = {
+  voice: SpeechSynthesisVoice | null;
+  likelyFemaleEnglish: boolean;
+  message: string;
+};
+
+function isEnglishVoice(voice: SpeechSynthesisVoice): boolean {
+  const language = voice.lang.replace("_", "-").toLowerCase();
+  return language === "en" || language.startsWith("en-");
+}
+
+function isUsEnglishVoice(voice: SpeechSynthesisVoice): boolean {
+  return voice.lang.replace("_", "-").toLowerCase().startsWith("en-us");
+}
+
+function selectSpeechVoice(voices: SpeechSynthesisVoice[]): SpeechVoiceChoice {
+  const englishVoices = voices.filter(isEnglishVoice);
+  const likelyFemaleVoices = englishVoices.filter(voice => likelyFemaleVoiceName.test(voice.name));
+  const voice = likelyFemaleVoices.find(isUsEnglishVoice)
+    ?? likelyFemaleVoices[0]
+    ?? englishVoices.find(isUsEnglishVoice)
+    ?? englishVoices[0]
+    ?? null;
+
+  if (voice && likelyFemaleVoices.includes(voice)) {
+    return { voice, likelyFemaleEnglish: true, message: `Female-sounding English voice selected: ${voice.name}.` };
+  }
+  if (voice) {
+    return { voice, likelyFemaleEnglish: false, message: `No clearly feminine English voice is available; using ${voice.name}.` };
+  }
+  return {
+    voice: null,
+    likelyFemaleEnglish: false,
+    message: voices.length
+      ? "No English voice is available; trying the browser default with English pronunciation."
+      : "No speech voices are loaded; trying the browser default with English pronunciation.",
+  };
+}
+
+function waitForSpeechVoices(
+  synthesis: SpeechSynthesis,
+  setCancel: (cancel: (() => void) | null) => void,
+): Promise<SpeechSynthesisVoice[]> {
+  const available = synthesis.getVoices();
+  if (available.length) return Promise.resolve(available);
+
+  return new Promise(resolve => {
+    let settled = false;
+    let timeout = 0;
+    const finish = (voices: SpeechSynthesisVoice[]) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      synthesis.removeEventListener("voiceschanged", onVoicesChanged);
+      setCancel(null);
+      resolve(voices);
+    };
+    const onVoicesChanged = () => {
+      const voices = synthesis.getVoices();
+      if (voices.length) finish(voices);
+    };
+    timeout = window.setTimeout(() => finish(synthesis.getVoices()), 1000);
+    setCancel(() => finish([]));
+    synthesis.addEventListener("voiceschanged", onVoicesChanged);
+  });
+}
 
 function Viewport({ center }: { center: [number, number] }) {
   const map = useMap();
@@ -56,8 +126,145 @@ export function EarlyWarningPanel({ scenario, onScenarioChange }: { scenario: Sc
   const [error, setError] = useState("");
   const [simulationTime, setSimulationTime] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [alarmEnabled, setAlarmEnabled] = useState(false);
+  const [masterVolume, setMasterVolume] = useState(1);
+  const [audioMessage, setAudioMessage] = useState("");
+  const [voiceStatus, setVoiceStatus] = useState("Checking available speech voices.");
   const [pickMode, setPickMode] = useState<"epicenter" | "target">("epicenter");
   const [selectedTarget, setSelectedTarget] = useState(0);
+  const alarmAudioRef = useRef<HTMLAudioElement | null>(null);
+  const alarmTriggeredRef = useRef(false);
+  const alarmSequenceRef = useRef(0);
+  const voiceWaitCancelRef = useRef<(() => void) | null>(null);
+  const phaseTimeoutRef = useRef<number | null>(null);
+  const sequenceTimeoutRef = useRef<number | null>(null);
+  const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+
+  const cancelAlarmPlayback = () => {
+    alarmSequenceRef.current += 1;
+    voiceWaitCancelRef.current?.();
+    voiceWaitCancelRef.current = null;
+    if (phaseTimeoutRef.current !== null) {
+      window.clearTimeout(phaseTimeoutRef.current);
+      phaseTimeoutRef.current = null;
+    }
+    if (sequenceTimeoutRef.current !== null) {
+      window.clearTimeout(sequenceTimeoutRef.current);
+      sequenceTimeoutRef.current = null;
+    }
+    if (typeof window.speechSynthesis !== "undefined") window.speechSynthesis.cancel();
+    speechUtteranceRef.current = null;
+    const audio = alarmAudioRef.current;
+    if (audio) {
+      audio.onended = null;
+      audio.onerror = null;
+      audio.pause();
+      try { audio.currentTime = 0; } catch {}
+    }
+  };
+
+  const runAlarmSequence = (source: "simulation" | "test") => {
+    cancelAlarmPlayback();
+    const sequence = alarmSequenceRef.current;
+    const deadline = performance.now() + ALARM_SEQUENCE_DURATION_MS;
+    const sequenceIsCurrent = () => sequence === alarmSequenceRef.current;
+    const finishSequence = (message?: string) => {
+      if (!sequenceIsCurrent()) return;
+      cancelAlarmPlayback();
+      setAudioMessage(message ?? (source === "test" ? "10-second alarm test complete." : "10-second simulated alarm sequence complete."));
+    };
+    sequenceTimeoutRef.current = window.setTimeout(finishSequence, ALARM_SEQUENCE_DURATION_MS);
+
+    const speakNext = async () => {
+      if (!sequenceIsCurrent()) return;
+      const remainingSeconds = (deadline - performance.now()) / 1000;
+      if (remainingSeconds <= 0.05) {
+        finishSequence();
+        return;
+      }
+
+      if (typeof window.speechSynthesis === "undefined" || typeof SpeechSynthesisUtterance === "undefined") {
+        setVoiceStatus("Speech synthesis is unavailable; repeating the alarm tone only.");
+        void playTone();
+        return;
+      }
+
+      const synthesis = window.speechSynthesis;
+      const voices = await waitForSpeechVoices(synthesis, cancel => { voiceWaitCancelRef.current = cancel; });
+      if (!sequenceIsCurrent()) return;
+      const choice = selectSpeechVoice(voices);
+      setVoiceStatus(choice.message);
+
+      const utterance = new SpeechSynthesisUtterance("Earthquake!");
+      utterance.lang = choice.voice?.lang ?? "en-US";
+      utterance.voice = choice.voice;
+      utterance.rate = 0.92;
+      utterance.pitch = 1.08;
+      utterance.volume = masterVolume;
+      speechUtteranceRef.current = utterance;
+      let completed = false;
+      const finishSpeech = () => {
+        if (completed) return;
+        completed = true;
+        if (phaseTimeoutRef.current !== null) {
+          window.clearTimeout(phaseTimeoutRef.current);
+          phaseTimeoutRef.current = null;
+        }
+        if (speechUtteranceRef.current === utterance) speechUtteranceRef.current = null;
+        if (sequenceIsCurrent()) void playTone();
+      };
+      utterance.onend = finishSpeech;
+      utterance.onerror = finishSpeech;
+      phaseTimeoutRef.current = window.setTimeout(() => {
+        if (!sequenceIsCurrent()) return;
+        if (speechUtteranceRef.current === utterance) synthesis.cancel();
+        finishSpeech();
+      }, Math.min(2200, Math.max(50, (deadline - performance.now()))));
+      setAudioMessage(source === "test" ? "Speaking test: Earthquake!" : "Speaking: Earthquake!");
+      try {
+        synthesis.speak(utterance);
+      } catch {
+        finishSpeech();
+      }
+    };
+
+    const playTone = async () => {
+      if (!sequenceIsCurrent()) return;
+      const remainingSeconds = (deadline - performance.now()) / 1000;
+      if (remainingSeconds <= 0.05) {
+        finishSequence();
+        return;
+      }
+      try {
+        const audio = alarmAudioRef.current ?? new Audio(ALARM_AUDIO_URL);
+        alarmAudioRef.current = audio;
+        audio.volume = masterVolume;
+        audio.currentTime = 0;
+        audio.onended = () => {
+          if (!sequenceIsCurrent()) return;
+          audio.onended = null;
+          audio.onerror = null;
+          void speakNext();
+        };
+        audio.onerror = () => {
+          if (!sequenceIsCurrent()) return;
+          finishSequence("The supplied alarm recording is unsupported or could not be loaded by this browser.");
+        };
+        setAudioMessage(source === "test" ? "Supplied alarm recording playing." : "Supplied alarm recording playing.");
+        await audio.play();
+        if (!sequenceIsCurrent()) audio.pause();
+      } catch (playbackError) {
+        if (sequenceIsCurrent()) {
+          const unsupported = playbackError instanceof DOMException && playbackError.name === "NotSupportedError";
+          finishSequence(unsupported
+            ? "This browser cannot play the supplied M4A recording."
+            : "The supplied alarm recording could not be played.");
+        }
+      }
+    };
+
+    void speakNext();
+  };
 
   const maximumTime = result
     ? Math.max(...result.targets.map(target => target.s_arrival_seconds), ...result.sensors.map(sensor => sensor.processed_seconds), result.alert_issuance_seconds) + 5
@@ -79,6 +286,46 @@ export function EarlyWarningPanel({ scenario, onScenarioChange }: { scenario: Sc
   }, [playing, maximumTime]);
 
   useEffect(() => {
+    if (!playing || !result || alarmTriggeredRef.current || simulationTime < result.alert_issuance_seconds) return;
+    alarmTriggeredRef.current = true;
+    if (!alarmEnabled) return;
+
+    void runAlarmSequence("simulation");
+  }, [alarmEnabled, playing, result, simulationTime]);
+
+  useEffect(() => {
+    if (typeof window.speechSynthesis === "undefined") {
+      setVoiceStatus("Speech synthesis is unavailable; alarm tone only.");
+      return;
+    }
+    const synthesis = window.speechSynthesis;
+    const updateVoiceStatus = () => {
+      const voices = synthesis.getVoices();
+      setVoiceStatus(voices.length ? selectSpeechVoice(voices).message : "Waiting for browser speech voices.");
+    };
+    updateVoiceStatus();
+    synthesis.addEventListener("voiceschanged", updateVoiceStatus);
+    return () => synthesis.removeEventListener("voiceschanged", updateVoiceStatus);
+  }, []);
+
+  useEffect(() => {
+    if (result) return;
+    alarmTriggeredRef.current = false;
+    cancelAlarmPlayback();
+    setAudioMessage("");
+  }, [result]);
+
+  useEffect(() => () => {
+    cancelAlarmPlayback();
+    const audio = alarmAudioRef.current;
+    if (audio) {
+      audio.removeAttribute("src");
+      audio.load();
+      alarmAudioRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
     setResult(undefined);
     setPlaying(false);
     setSimulationTime(0);
@@ -90,6 +337,56 @@ export function EarlyWarningPanel({ scenario, onScenarioChange }: { scenario: Sc
     setPlaying(false);
     setSimulationTime(0);
     setError("");
+  };
+  const resetSimulation = () => {
+    setPlaying(false);
+    setSimulationTime(0);
+    alarmTriggeredRef.current = false;
+    cancelAlarmPlayback();
+    setAudioMessage("");
+  };
+  const toggleAlarmAudio = async () => {
+    if (alarmEnabled) {
+      setAlarmEnabled(false);
+      cancelAlarmPlayback();
+      setAudioMessage("Sound muted.");
+      return;
+    }
+    try {
+      const audio = alarmAudioRef.current ?? new Audio(ALARM_AUDIO_URL);
+      alarmAudioRef.current = audio;
+      audio.preload = "auto";
+      audio.volume = 0;
+      const primingPlayback = audio.play();
+      await primingPlayback;
+      audio.pause();
+      audio.currentTime = 0;
+      audio.volume = masterVolume;
+      const speechAvailable = typeof window.speechSynthesis !== "undefined" && typeof SpeechSynthesisUtterance !== "undefined";
+      if (!speechAvailable) throw new Error("Speech synthesis is unavailable.");
+      setAlarmEnabled(true);
+      setAudioMessage("Sound enabled; supplied alarm recording ready.");
+    } catch {
+      const audio = alarmAudioRef.current;
+      if (audio) {
+        audio.pause();
+        audio.volume = masterVolume;
+      }
+      setAlarmEnabled(true);
+      setAudioMessage("Sound enabled; recording will be attempted after the voice announcement.");
+    }
+  };
+  const stopAlarm = () => {
+    cancelAlarmPlayback();
+    setAudioMessage("Alarm stopped.");
+  };
+  const updateMasterVolume = (value: number) => {
+    setMasterVolume(value);
+    if (alarmAudioRef.current) alarmAudioRef.current.volume = value;
+    if (speechUtteranceRef.current) speechUtteranceRef.current.volume = value;
+  };
+  const testAlarm = () => {
+    if (alarmEnabled) void runAlarmSequence("test");
   };
   const updateTarget = (index: number, field: keyof EarlyWarningTarget, value: string) => {
     setConfig(current => ({
@@ -123,6 +420,8 @@ export function EarlyWarningPanel({ scenario, onScenarioChange }: { scenario: Sc
     if (loading) return;
     setLoading(true);
     setPlaying(false);
+    cancelAlarmPlayback();
+    setAudioMessage("");
     setError("");
     try {
       const simulation = await api.earlyWarning({
@@ -132,6 +431,7 @@ export function EarlyWarningPanel({ scenario, onScenarioChange }: { scenario: Sc
         depth_km: scenario.depth_km,
         ...config,
       });
+      alarmTriggeredRef.current = false;
       setResult(simulation);
       setSimulationTime(0);
     } catch (requestError) {
@@ -151,7 +451,7 @@ export function EarlyWarningPanel({ scenario, onScenarioChange }: { scenario: Sc
   return <section className="warning-simulation" aria-labelledby="warning-title">
     <div className="warning-heading">
       <div><p className="eyebrow">Modeled propagation</p><h3 id="warning-title">Early-warning research simulation</h3></div>
-      <strong className="research-banner">Research Simulation — Not a Real-Time Warning Service</strong>
+      <strong className="research-banner">Research simulation only — this is not a real earthquake warning.</strong>
     </div>
     <p className="warning-copy">Configure an idealized synthetic sensor network and target locations. These are deterministic model outputs, not station readings or safety guarantees.</p>
     <form className="warning-form" onSubmit={runSimulation}>
@@ -191,10 +491,20 @@ export function EarlyWarningPanel({ scenario, onScenarioChange }: { scenario: Sc
       <div className="map-legend" aria-label="Map legend"><span><i className="legend-epicenter" />Hypothetical epicenter</span><span><i className="legend-target" />Target with potential lead</span><span><i className="legend-no-lead" />Zero/negative lead</span><span><i className="legend-waiting" />Sensor waiting</span><span><i className="legend-detected" />P detected</span><span><i className="legend-sensor" />Detection processed</span><span><i className="legend-p" />P-wavefront</span><span><i className="legend-s" />S-wavefront</span></div>
       {result && (pRadius >= maximumSurfaceRadius || sRadius >= maximumSurfaceRadius) && <p className="wavefront-limit" role="status">A modeled wavefront has reached the antipodal surface limit; no distinct farther surface front is drawn.</p>}
       <div className="simulation-toolbar">
-        <div className="playback-controls"><button type="button" title="Play simulation" aria-label="Play simulation" disabled={!result || playing || simulationTime >= maximumTime} onClick={() => setPlaying(true)}>▶</button><button type="button" title="Pause simulation" aria-label="Pause simulation" disabled={!playing} onClick={() => setPlaying(false)}>Ⅱ</button><button type="button" title="Reset simulation clock" aria-label="Reset simulation clock" disabled={!result} onClick={() => { setPlaying(false); setSimulationTime(0); }}>↺</button></div>
+        <div className="playback-controls"><button type="button" title="Play simulation" aria-label="Play simulation" disabled={!result || playing || simulationTime >= maximumTime} onClick={() => setPlaying(true)}>▶</button><button type="button" title="Pause simulation" aria-label="Pause simulation" disabled={!playing} onClick={() => setPlaying(false)}>Ⅱ</button><button type="button" title="Reset simulation clock" aria-label="Reset simulation clock" disabled={!result} onClick={resetSimulation}>↺</button></div>
         <div className="clock-readout"><span>SIMULATION TIME</span><strong>{fmt(simulationTime, 1)} s</strong></div>
         <div className="alert-readout"><span>MODELED ALERT</span><strong className={alertIssued ? "issued" : "pending"}>{alertIssued ? "Issued" : "Not yet issued"}</strong><small>{result ? `at ${fmt(result.alert_issuance_seconds)} s` : "Run simulation to calculate"}</small></div>
         <button type="submit" disabled={loading}>{loading ? "Calculating…" : result ? "Run again" : "Run simulation"}</button>
+      </div>
+      {alertIssued && <div className="earthquake-alert" role="alert"><strong>EARTHQUAKE!</strong></div>}
+      <div className="simulation-audio-controls" role="group" aria-label="Simulation alarm audio controls">
+        <span className={`simulation-audio-state ${alarmEnabled ? "enabled" : ""}`}>{alarmEnabled ? "Sound enabled" : "Sound muted"}</span>
+        <button type="button" className="quiet-button" aria-pressed={alarmEnabled} onClick={() => void toggleAlarmAudio()}>{alarmEnabled ? "Mute" : "Enable Sound"}</button>
+        <label className="simulation-volume">Master volume {Math.round(masterVolume * 100)}%<input aria-label="Master volume" type="range" min="0" max="1" step="0.05" value={masterVolume} onChange={event => updateMasterVolume(Number(event.target.value))} /></label>
+        <button type="button" disabled={!alarmEnabled} onClick={testAlarm}>Test Alarm</button>
+        <button type="button" onClick={stopAlarm}>Stop Alarm</button>
+        <span className="simulation-voice-status" role="status">{voiceStatus}</span>
+        {audioMessage && <span className="simulation-audio-notice" role="status">{audioMessage}</span>}
       </div>
     </form>
     {error && <div className="state error" role="alert">{error}</div>}
