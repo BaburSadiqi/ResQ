@@ -143,6 +143,32 @@ def test_simulation_api_returns_model_and_timeline() -> None:
     assert payload["targets"][0]["alert_issuance_seconds"] == payload["alert_issuance_seconds"]
 
 
+def test_frontend_early_warning_request_shape_and_network_radius() -> None:
+    payload = {
+        "latitude": 34.5,
+        "longitude": 67.1,
+        "magnitude": 5.8,
+        "depth_km": 10,
+        "detection_delay_seconds": 0.8,
+        "processing_delay_seconds": 0.5,
+        "sensor_count": 4,
+        "required_sensor_count": 2,
+        "sensor_radius_km": 35,
+        "p_wave_velocity_km_s": 6,
+        "s_wave_velocity_km_s": 3.5,
+        "targets": [{"name": "Example", "latitude": 35, "longitude": 68}],
+    }
+    response = TestClient(app).post("/api/v1/scenarios/early-warning", json=payload)
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["scenario"] == payload
+    assert all(
+        sensor["epicentral_distance_km"] <= payload["sensor_radius_km"]
+        for sensor in result["sensors"]
+    )
+
+
 def test_simulation_api_rejects_invalid_coordinates_and_wave_speeds() -> None:
     client = TestClient(app)
     invalid_coordinate = scenario().model_dump()

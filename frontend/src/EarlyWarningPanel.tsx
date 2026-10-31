@@ -125,7 +125,13 @@ export function EarlyWarningPanel({ scenario, onScenarioChange }: { scenario: Sc
     setPlaying(false);
     setError("");
     try {
-      const simulation = await api.earlyWarning({ ...scenario, ...config });
+      const simulation = await api.earlyWarning({
+        latitude: scenario.latitude,
+        longitude: scenario.longitude,
+        magnitude: scenario.magnitude,
+        depth_km: scenario.depth_km,
+        ...config,
+      });
       setResult(simulation);
       setSimulationTime(0);
     } catch (requestError) {
