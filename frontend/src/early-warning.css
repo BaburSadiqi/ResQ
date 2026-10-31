@@ -5,3 +5,4 @@
 .legend-no-lead{background:#ef806b;border:1px solid #fff}
 .legend-waiting{background:#b0bdcc;border:1px solid #07182c}.legend-detected{background:#f6d365;border:1px solid #07182c}
 .wavefront-limit{margin:0;color:#ffd9a1;font-size:11px}
+.simulation-audio-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 2px;color:var(--warning-muted);font-size:11px}.simulation-audio-state{color:#d7b8a5}.simulation-audio-state.enabled{color:#79e2b0}.simulation-audio-notice{color:#a7e7d0;font-size:11px}.simulation-voice-status{flex-basis:100%;color:#c3d6d8}.warning-simulation .simulation-volume{display:flex;align-items:center;gap:7px}.warning-simulation .simulation-volume input{width:130px;height:20px;padding:0;accent-color:#79e2b0}.earthquake-alert{display:grid;gap:5px;padding:12px 14px;border:1px solid #df765f;border-radius:4px;background:#472b2a;color:#fff0e8}.earthquake-alert strong{font-size:16px;line-height:1.35;letter-spacing:0}
