@@ -1,5 +1,7 @@
 from math import asin, degrees, sin
 
+from fastapi.testclient import TestClient
+
 from app.main import app
 from app.schemas.early_warning import (
     EarlyWarningSimulationRequest,
@@ -10,7 +12,6 @@ from app.services.early_warning import (
     simulate_early_warning,
     warning_status,
 )
-from fastapi.testclient import TestClient
 
 
 def scenario(**overrides) -> EarlyWarningSimulationRequest:
@@ -63,6 +64,53 @@ def test_hypocentral_travel_times_and_quorum_alert() -> None:
     assert depth_result.targets[0].s_arrival_seconds == 10 / 3.5
 
 
+def test_frontend_default_alert_quorum_and_multiple_target_timings() -> None:
+    result = simulate_early_warning(
+        EarlyWarningSimulationRequest(
+            latitude=34.5,
+            longitude=67.1,
+            magnitude=5.8,
+            depth_km=15,
+            detection_delay_seconds=0.8,
+            processing_delay_seconds=0.5,
+            sensor_count=8,
+            required_sensor_count=2,
+            sensor_radius_km=250,
+            p_wave_velocity_km_s=6,
+            s_wave_velocity_km_s=3.5,
+            targets=[
+                TargetLocation(name="Kabul (example)", latitude=34.5553, longitude=69.2075),
+                TargetLocation(name="Kandahar (example)", latitude=31.6289, longitude=65.7372),
+                TargetLocation(name="Herat (example)", latitude=34.3529, longitude=62.204),
+            ],
+        )
+    )
+
+    ordered_sensors = sorted(result.sensors, key=lambda sensor: sensor.processed_seconds)
+    assert [sensor.id for sensor in ordered_sensors[:2]] == ["SYN-01", "SYN-02"]
+    assert all(sensor.epicentral_distance_km <= 250 for sensor in result.sensors)
+    assert abs(ordered_sensors[0].p_arrival_seconds - 89.65210538520623 / 6) < 1e-12
+    assert abs(ordered_sensors[1].p_arrival_seconds - 125.89678312014428 / 6) < 1e-12
+    assert ordered_sensors[0].detected_seconds == ordered_sensors[0].p_arrival_seconds + 0.8
+    assert ordered_sensors[0].processed_seconds == ordered_sensors[0].detected_seconds + 0.5
+    assert abs(result.alert_issuance_seconds - 22.282797186690715) < 1e-12
+    assert result.alert_issuance_seconds == ordered_sensors[1].processed_seconds
+
+    targets = {target.name: target for target in result.targets}
+    expected = {
+        "Kabul (example)": (193.15876535180692, 32.29005205951999, 55.35437495917712),
+        "Kandahar (example)": (343.5721669351016, 57.31657552878315, 98.25698662077112),
+        "Herat (example)": (449.3121408212482, 74.9270756375404, 128.44641537864067),
+    }
+    for name, (distance, p_arrival, s_arrival) in expected.items():
+        target = targets[name]
+        assert abs(target.epicentral_distance_km - distance) < 1e-9
+        assert abs(target.p_arrival_seconds - p_arrival) < 1e-9
+        assert abs(target.s_arrival_seconds - s_arrival) < 1e-9
+        assert abs(target.warning_lead_seconds - (s_arrival - result.alert_issuance_seconds)) < 1e-9
+        assert target.status == "potential_lead_time"
+
+
 def test_surface_distance_uses_haversine() -> None:
     assert abs(great_circle_distance_km(0, 0, 0, 1) - 111.195) < 0.01
     assert abs(great_circle_distance_km(0, 179, 0, -179) - 222.39) < 0.02
@@ -101,28 +149,30 @@ def test_warning_lead_statuses_include_positive_zero_and_negative() -> None:
         "detection_delay_seconds": 0,
         "processing_delay_seconds": 0,
     }
-    positive = simulate_early_warning(
-        scenario(**base, targets=[TargetLocation(name="Far", latitude=0, longitude=1)])
-    )
-    negative = simulate_early_warning(
-        scenario(**base, targets=[TargetLocation(name="Near", latitude=0, longitude=0)])
-    )
-    alert_time = positive.alert_issuance_seconds
+    alert_time = simulate_early_warning(
+        scenario(**base, targets=[TargetLocation(name="Probe", latitude=0, longitude=0)])
+    ).alert_issuance_seconds
     zero_distance = alert_time * 3.5
     zero_longitude = degrees(2 * asin(sin(zero_distance / (2 * 6371))))
-    zero = simulate_early_warning(
+    multiple = simulate_early_warning(
         scenario(
             **base,
-            targets=[TargetLocation(name="Boundary", latitude=0, longitude=zero_longitude)],
+            targets=[
+                TargetLocation(name="Near", latitude=0, longitude=0),
+                TargetLocation(name="Boundary", latitude=0, longitude=zero_longitude),
+                TargetLocation(name="Far", latitude=0, longitude=1),
+            ],
         )
     )
 
-    assert positive.targets[0].warning_lead_seconds > 0
-    assert positive.targets[0].status == "potential_lead_time"
-    assert abs(zero.targets[0].warning_lead_seconds) <= 1e-9
-    assert zero.targets[0].status == "no_useful_lead_time"
-    assert negative.targets[0].warning_lead_seconds < 0
-    assert negative.targets[0].status == "shaking_before_alert"
+    by_name = {target.name: target for target in multiple.targets}
+    assert by_name["Far"].warning_lead_seconds > 0
+    assert by_name["Far"].status == "potential_lead_time"
+    assert abs(by_name["Boundary"].warning_lead_seconds) <= 1e-9
+    assert by_name["Boundary"].status == "no_useful_lead_time"
+    assert by_name["Near"].warning_lead_seconds < 0
+    assert by_name["Near"].status == "shaking_before_alert"
+    assert by_name["Near"].s_arrival_seconds < multiple.alert_issuance_seconds
     assert warning_status(0) == "no_useful_lead_time"
 
 

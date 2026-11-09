@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Circle, CircleMarker, MapContainer, Popup, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import { api } from "./api";
+import { shouldTriggerSimulationAlarm } from "./alarmTiming.js";
 import "./early-warning.css";
+import "./target-warning.css";
 import type { EarlyWarningInput, EarlyWarningResult, EarlyWarningTarget, ScenarioInput, SimulatedSensor } from "./types";
 
 const exampleTargets: EarlyWarningTarget[] = [
@@ -286,7 +288,13 @@ export function EarlyWarningPanel({ scenario, onScenarioChange }: { scenario: Sc
   }, [playing, maximumTime]);
 
   useEffect(() => {
-    if (!playing || !result || alarmTriggeredRef.current || simulationTime < result.alert_issuance_seconds) return;
+    if (!shouldTriggerSimulationAlarm(
+      playing,
+      Boolean(result),
+      alarmTriggeredRef.current,
+      simulationTime,
+      result?.alert_issuance_seconds ?? Number.POSITIVE_INFINITY,
+    )) return;
     alarmTriggeredRef.current = true;
     if (!alarmEnabled) return;
 
@@ -509,7 +517,24 @@ export function EarlyWarningPanel({ scenario, onScenarioChange }: { scenario: Sc
     </form>
     {error && <div className="state error" role="alert">{error}</div>}
     {result && <>
-      <div className="sensor-summary" aria-live="polite"><span><i className="legend-sensor" />{result.sensors.length} synthetic sensors</span><span>{detectedCount} detected P</span><span>{processedCount} processed</span><span>Quorum {result.model.required_sensor_count}/{result.sensors.length}</span></div>
+      <div className="sensor-summary" aria-live="polite"><span><i className="legend-sensor" />{result.sensors.length} hypothetical sensors</span><span>{result.sensors.filter(sensor => sensor.epicentral_distance_km <= result.scenario.sensor_radius_km + 1e-9).length}/{result.sensors.length} within {fmt(result.scenario.sensor_radius_km, 0)} km radius (eligible)</span><span>{detectedCount} detected P</span><span>{processedCount} processed</span><span>Quorum {result.model.required_sensor_count}/{result.sensors.length}</span></div>
+      <div className="quorum-summary"><strong>Alert quorum:</strong> {result.sensors.filter(sensor => sensor.processed_seconds <= result.alert_issuance_seconds).map(sensor => `${sensor.id} at ${fmt(sensor.processed_seconds)} s`).join(", ")} completed processing by alert issuance at {fmt(result.alert_issuance_seconds)} s.</div>
+      <section className={`warning-overall-status ${result.targets.every(target => target.status === "potential_lead_time") ? "positive" : "late"}`} aria-live="polite">
+        <strong>{result.targets.every(target => target.status === "potential_lead_time")
+          ? "Positive lead time: potentially useful early warning in this simplified model."
+          : `Zero or negative lead time: warning is too late for ${result.targets.filter(target => target.status !== "potential_lead_time").map(target => target.name).join(", ")}.`}</strong>
+        <div className="target-warning-summaries">{result.targets.map(target => <article className="target-warning-summary" key={target.name}>
+          <h4>{target.name}</h4>
+          <span>Expected S-wave arrival <strong>{fmt(target.s_arrival_seconds)} s</strong></span>
+          <span>Expected alert issuance <strong>{fmt(target.alert_issuance_seconds)} s</strong></span>
+          <span>Available warning lead <strong className={target.warning_lead_seconds > 0 ? "positive-lead" : "negative-lead"}>{target.warning_lead_seconds > 0 ? "+" : ""}{fmt(target.warning_lead_seconds)} s</strong></span>
+          <span className="target-warning-verdict">{target.status === "potential_lead_time"
+            ? "Early enough in this model"
+            : target.status === "no_useful_lead_time"
+              ? "No lead: alert coincides with S-wave arrival"
+              : `Too late: S-wave arrives ${fmt(-target.warning_lead_seconds)} s before the alert`}</span>
+        </article>)}</div>
+      </section>
       <div className="warning-table-wrap"><table className="warning-table"><thead><tr><th>Target</th><th>Distance</th><th>P arrival</th><th>S arrival</th><th>First detection</th><th>Alert time</th><th>Lead time</th><th>Time to S</th><th>Status</th></tr></thead><tbody>{result.targets.map(target => {
         const remaining = target.s_arrival_seconds - simulationTime;
         const noLead = target.status !== "potential_lead_time";
