@@ -8,6 +8,8 @@ type ApiEvent = Omit<Event, "magnitude" | "latitude" | "longitude" | "depth_km">
 type ApiSummary = Omit<Summary, "largest_magnitude" | "average_magnitude"> & { largest_magnitude: Decimal | null; average_magnitude: Decimal | null };
 type ApiGeographic = Omit<Geographic, "bounds" | "smallest_magnitude" | "largest_magnitude" | "average_magnitude"> & { bounds: { south: Decimal; north: Decimal; west: Decimal; east: Decimal; crosses_antimeridian: boolean }; smallest_magnitude: Decimal | null; largest_magnitude: Decimal | null; average_magnitude: Decimal | null };
 type ApiScenario = { scenario: Record<keyof ScenarioInput, Decimal>; historical_catalog: Record<"events_within_radius" | "events_with_magnitude" | "events_without_magnitude", number> & Record<"smallest_magnitude" | "largest_magnitude" | "average_magnitude" | "nearest_distance_km" | "farthest_distance_km" | "average_distance_km", Decimal | null> };
+export type MobileReport = { id: string; device_id: string; received_at: string; sampling_rate_hz: number; motion_state: string; peak_acceleration: number; rms_acceleration: number; sensor_type: string };
+export type MobileDevice = { device_id: string; manufacturer: string | null; model: string | null; sensor_name: string | null; last_seen: string; online: boolean; latest_report: MobileReport | null };
 
 const numeric = (value: Decimal | null): number | null => value === null ? null : Number(value);
 function requiredNumber(value: Decimal): number { const result = Number(value); if (!Number.isFinite(result)) throw new ApiError("The API returned an invalid numeric value."); return result; }
@@ -53,4 +55,6 @@ export const api = {
   async geographic(params: Record<string, number>): Promise<Geographic> { const query = new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)])); const value = await request<ApiGeographic>(`/analytics/geographic?${query}`); return { ...value, bounds: { ...value.bounds, south: requiredNumber(value.bounds.south), north: requiredNumber(value.bounds.north), west: requiredNumber(value.bounds.west), east: requiredNumber(value.bounds.east) }, smallest_magnitude: numeric(value.smallest_magnitude), largest_magnitude: numeric(value.largest_magnitude), average_magnitude: numeric(value.average_magnitude) }; },
   async scenario(input: ScenarioInput): Promise<ScenarioResult> { return scenarioFromApi(await request<ApiScenario>("/scenarios/earthquake", { method: "POST", body: JSON.stringify(input) })); },
   async earlyWarning(input: EarlyWarningInput): Promise<EarlyWarningResult> { return request<EarlyWarningResult>("/scenarios/early-warning", { method: "POST", body: JSON.stringify(input) }); },
+  mobileDevices: (): Promise<MobileDevice[]> => request<MobileDevice[]>("/mobile/devices"),
+  recentMobileReports: (): Promise<MobileReport[]> => request<MobileReport[]>("/mobile/sensor-reports/recent?limit=12"),
 };

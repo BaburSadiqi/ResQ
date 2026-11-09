@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     usgs_base_url: AnyHttpUrl = "https://earthquake.usgs.gov/fdsnws/event/1"
     log_level: str = "INFO"
     http_timeout_seconds: float = Field(default=15, gt=0, le=60)
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
 
 @lru_cache

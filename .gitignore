@@ -6,3 +6,25 @@ __pycache__/
 .ruff_cache/
 backend/.env
 backend/.venv/
+
+# Frontend (Node / Vite)
+frontend/node_modules/
+frontend/dist/
+frontend/.env*
+
+# Android / Gradle / Kotlin
+android/.gradle/
+android/.kotlin/
+android/.idea/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
