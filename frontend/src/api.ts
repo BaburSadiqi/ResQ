@@ -10,6 +10,7 @@ type ApiGeographic = Omit<Geographic, "bounds" | "smallest_magnitude" | "largest
 type ApiScenario = { scenario: Record<keyof ScenarioInput, Decimal>; historical_catalog: Record<"events_within_radius" | "events_with_magnitude" | "events_without_magnitude", number> & Record<"smallest_magnitude" | "largest_magnitude" | "average_magnitude" | "nearest_distance_km" | "farthest_distance_km" | "average_distance_km", Decimal | null> };
 export type MobileReport = { id: string; device_id: string; received_at: string; sampling_rate_hz: number; motion_state: string; peak_acceleration: number; rms_acceleration: number; sensor_type: string };
 export type MobileDevice = { device_id: string; manufacturer: string | null; model: string | null; sensor_name: string | null; last_seen: string; online: boolean; latest_report: MobileReport | null };
+export type CorrelatedEvent = { event_id: string; created_at: string; status: string; device_count: number; maximum_peak: number; correlation_window_seconds: number };
 
 const numeric = (value: Decimal | null): number | null => value === null ? null : Number(value);
 function requiredNumber(value: Decimal): number { const result = Number(value); if (!Number.isFinite(result)) throw new ApiError("The API returned an invalid numeric value."); return result; }
@@ -57,4 +58,5 @@ export const api = {
   async earlyWarning(input: EarlyWarningInput): Promise<EarlyWarningResult> { return request<EarlyWarningResult>("/scenarios/early-warning", { method: "POST", body: JSON.stringify(input) }); },
   mobileDevices: (): Promise<MobileDevice[]> => request<MobileDevice[]>("/mobile/devices"),
   recentMobileReports: (): Promise<MobileReport[]> => request<MobileReport[]>("/mobile/sensor-reports/recent?limit=12"),
+  latestCorrelatedEvent: (): Promise<CorrelatedEvent | null> => request<CorrelatedEvent | null>("/mobile/correlated-events/latest"),
 };

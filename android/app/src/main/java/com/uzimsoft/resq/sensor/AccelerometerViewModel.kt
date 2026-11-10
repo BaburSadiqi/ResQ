@@ -12,10 +12,13 @@ import androidx.lifecycle.AndroidViewModel
 import com.uzimsoft.resq.data.network.AggregatedSensorReport
 import com.uzimsoft.resq.data.network.MobileNetworkReporter
 import com.uzimsoft.resq.data.network.NetworkStatus
+import com.uzimsoft.resq.data.network.BackendConnectionResult
+import com.uzimsoft.resq.data.network.BackendDiscovery
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlin.math.sqrt
+import com.uzimsoft.resq.data.network.ResearchAlert
 
 enum class VibrationState {
     NORMAL,
@@ -59,6 +62,11 @@ data class AccelerometerUiState(
     val processedSamples: Long = 0L,
     val isLikelyEmulator: Boolean = false,
     val networkStatus: NetworkStatus = NetworkStatus.LOCAL_SENSOR_MODE,
+    val backendUrl: String = "",
+    val serverSettingsMessage: String? = null,
+    val isTestingServer: Boolean = false,
+    val discoveryStatus: String = "Searching...",
+    val researchAlert: ResearchAlert? = null,
 ) {
     val observedRateHz: Float?
         get() = observedIntervalMs?.takeIf { it > 0f }?.let { 1_000f / it }
@@ -105,6 +113,41 @@ class AccelerometerViewModel(application: Application) : AndroidViewModel(applic
     private var reportSamples = 0
     private var reportSquares = 0.0
     private var reportPeak = 0f
+    private lateinit var backendDiscovery: BackendDiscovery
+
+    init {
+        publish { it.copy(backendUrl = networkReporter.currentBackendUrl()) }
+        networkReporter.onAlert = { alert -> publish { state -> state.copy(researchAlert = alert) } }
+        backendDiscovery = networkReporter.discoverBackend(
+            onState = { state -> publish { it.copy(discoveryStatus = state) } },
+            onFound = { url -> publish { it.copy(backendUrl = url) } },
+        )
+    }
+
+    fun scanForBackend() { backendDiscovery.scan() }
+    fun dismissResearchAlert() { publish { it.copy(researchAlert = null) } }
+
+    fun testBackendUrl(url: String) {
+        publish { it.copy(isTestingServer = true, serverSettingsMessage = "Testing...") }
+        networkReporter.testConnection(url) { result ->
+            val message = when (result) {
+                BackendConnectionResult.Connected -> "Connected to ResQ Backend"
+                BackendConnectionResult.Failed -> "Connection failed"
+                BackendConnectionResult.InvalidBackend -> "Invalid ResQ backend"
+                is BackendConnectionResult.InvalidUrl -> result.message
+            }
+            publish { it.copy(isTestingServer = false, serverSettingsMessage = message) }
+        }
+    }
+
+    fun saveBackendUrl(url: String) {
+        try {
+            networkReporter.changeBackendUrl(url)
+            publish { it.copy(backendUrl = networkReporter.currentBackendUrl(), serverSettingsMessage = "Server URL saved.") }
+        } catch (error: IllegalArgumentException) {
+            publish { it.copy(serverSettingsMessage = error.message ?: "Invalid URL.") }
+        }
+    }
 
     fun startMonitoring() {
         if (selectedSensor == null) {
@@ -296,6 +339,8 @@ class AccelerometerViewModel(application: Application) : AndroidViewModel(applic
     }
 
     override fun onCleared() {
+        backendDiscovery.stop()
+        networkReporter.stopAlertPolling()
         unregister()
         super.onCleared()
     }
