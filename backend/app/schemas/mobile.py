@@ -79,3 +79,14 @@ class RegistrationResponse(BaseModel):
 class MobileHealthResponse(BaseModel):
     status: str = "ok"
     service: str = "resq-mobile-network"
+
+
+class CorrelatedVibrationAlert(BaseModel):
+    event_id: uuid.UUID
+    created_at: datetime
+    status: str = "SUSPECTED_SEISMIC_EVENT"
+    device_count: int
+    participant_device_ids: list[uuid.UUID]
+    trigger_timestamps: list[datetime]
+    maximum_peak: float
+    correlation_window_seconds: float

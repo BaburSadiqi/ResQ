@@ -24,11 +24,24 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import android.content.Context
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -48,7 +61,6 @@ import com.uzimsoft.resq.sensor.AccelerometerViewModel
 import com.uzimsoft.resq.sensor.MotionSample
 import com.uzimsoft.resq.sensor.VibrationState
 import com.uzimsoft.resq.data.network.NetworkStatus
-import com.uzimsoft.resq.BuildConfig
 import java.util.Locale
 import kotlin.math.max
 
@@ -80,6 +92,10 @@ fun ResQDashboard(viewModel: AccelerometerViewModel = viewModel()) {
         onStart = viewModel::startMonitoring,
         onStop = viewModel::stopMonitoring,
         onReset = viewModel::resetSession,
+        onTestServer = viewModel::testBackendUrl,
+        onSaveServer = viewModel::saveBackendUrl,
+        onScanBackend = viewModel::scanForBackend,
+        onDismissAlert = viewModel::dismissResearchAlert,
     )
 }
 
@@ -89,7 +105,12 @@ private fun DashboardContent(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onReset: () -> Unit,
+    onTestServer: (String) -> Unit,
+    onSaveServer: (String) -> Unit,
+    onScanBackend: () -> Unit,
+    onDismissAlert: () -> Unit,
 ) {
+    state.researchAlert?.let { alert -> ResearchAlertDialog(alert, onDismissAlert) }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -112,6 +133,9 @@ private fun DashboardContent(
         }
         item(key = "controls", contentType = "controls") {
             MonitoringControls(state, onStart, onStop, onReset)
+        }
+        item(key = "server-settings", contentType = "settings") {
+            ServerSettings(state, onTestServer, onSaveServer, onScanBackend)
         }
         item(key = "statistics", contentType = "card") {
             SessionStatistics(state)
@@ -171,13 +195,85 @@ private fun ModeBanner(state: AccelerometerUiState) {
                         NetworkStatus.CONNECTING -> "Connecting while local sensor monitoring continues."
                         NetworkStatus.BACKEND_UNAVAILABLE -> "Backend unavailable; local sensor monitoring continues."
                         NetworkStatus.LOCAL_SENSOR_MODE -> "This session uses on-device motion sensors only."
-                    } + " Backend: " + BuildConfig.RESQ_BACKEND_URL
+                    } + " Backend: " + state.backendUrl
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
+}
+
+@Composable
+private fun ServerSettings(
+    state: AccelerometerUiState,
+    onTestServer: (String) -> Unit,
+    onSaveServer: (String) -> Unit,
+    onScanBackend: () -> Unit,
+) {
+    var backendUrl by rememberSaveable(state.backendUrl) { mutableStateOf(state.backendUrl) }
+    Card(shape = RoundedCornerShape(24.dp)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Server Settings", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Backend Server", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Text("Backend Discovery", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Text(state.discoveryStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedButton(onClick = onScanBackend, modifier = Modifier.fillMaxWidth()) { Text("SCAN AGAIN") }
+            DetailRow("Current server", state.backendUrl)
+            OutlinedTextField(
+                value = backendUrl,
+                onValueChange = { backendUrl = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Backend URL") },
+                placeholder = { Text("http://192.168.1.10:8000/") },
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(
+                    onClick = { onTestServer(backendUrl) },
+                    enabled = !state.isTestingServer,
+                    modifier = Modifier.weight(1f),
+                ) { Text(if (state.isTestingServer) "TESTING..." else "TEST CONNECTION") }
+                Button(onClick = { onSaveServer(backendUrl) }, modifier = Modifier.weight(1f)) { Text("SAVE") }
+            }
+            state.serverSettingsMessage?.let { message ->
+                val color = when (message) {
+                    "Connected to ResQ Backend", "Server URL saved." -> SuccessGreen
+                    else -> MaterialTheme.colorScheme.error
+                }
+                Text(message, color = color, style = MaterialTheme.typography.bodySmall)
+            }
+            Text(
+                "Phone and backend computer must be reachable on the same local network for LAN demo mode.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ResearchAlertDialog(alert: com.uzimsoft.resq.data.network.ResearchAlert, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    LaunchedEffect(alert.eventId) {
+        val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 250, 150, 250), -1))
+        else @Suppress("DEPRECATION") vibrator?.vibrate(longArrayOf(0, 250, 150, 250), -1)
+        ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90).startTone(ToneGenerator.TONE_PROP_BEEP, 500)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("SUSPECTED SEISMIC EVENT", color = WarningRed, fontWeight = FontWeight.ExtraBold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Correlated vibration detected by ${alert.deviceCount} devices.", fontWeight = FontWeight.Bold)
+                Text("Event time: ${alert.createdAt}")
+                Text("Maximum peak: %.2f m/s²".format(Locale.US, alert.maximumPeak))
+                Text("Research prototype — not a confirmed earthquake.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = { Button(onClick = onDismiss) { Text("DISMISS") } },
+    )
 }
 
 @Composable
